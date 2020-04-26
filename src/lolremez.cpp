@@ -31,7 +31,7 @@ static void version(void)
 {
     std::cout
         << "lolremez " << PACKAGE_VERSION << "\n"
-        << "Copyright © 2005—2017 Sam Hocevar <sam@hocevar.net>\n"
+        << "Copyright © 2005—2020 Sam Hocevar <sam@hocevar.net>\n"
         << "This program is free software. It comes without any warranty, to the extent\n"
         << "permitted by applicable law. You can redistribute it and/or modify it under\n"
         << "the terms of the Do What the Fuck You Want to Public License, Version 2, as\n"
@@ -54,6 +54,10 @@ static void usage()
         << "  -p, --precision <bits>     floating-point precision (default 512)\n"
         << "      --progress             print progress\n"
         << "      --stats                print timing statistics\n"
+        << "      --debug                print error for every iteration\n"
+		<< "      --float                using float precision\n"
+		<< "      --double               using double precision\n"
+        << "      --fma                  using fused multiply-add\n"
         << "  -h, --help                 display this help and exit\n"
         << "  -V, --version              output version information and exit\n"
         << "\n"
@@ -98,6 +102,7 @@ int main(int argc, char **argv)
     bool show_stats = false;
     bool show_progress = false;
     bool show_debug = false;
+    bool use_fma = false;
 
     remez_solver solver;
 
@@ -113,6 +118,7 @@ int main(int argc, char **argv)
     opt.add_opt(203, "stats",     false);
     opt.add_opt(204, "progress",  false);
     opt.add_opt(205, "debug",     false);
+    opt.add_opt(206, "fma",       false);
 
     for (;;)
     {
@@ -158,6 +164,9 @@ int main(int argc, char **argv)
             break;
         case 205: /* --debug */
             show_debug = true;
+            break;
+        case 206: /* --fma */
+            use_fma = true;
             break;
         case 'h': /* --help */
             usage();
@@ -281,17 +290,31 @@ int main(int argc, char **argv)
     std::cout << type << " f(" << type << " x)\n{\n";
     for (int j = p.degree(); j >= 0; --j)
     {
-        char const *a = j ? "u = u * x +" : "return u * x +";
-        if (j == p.degree())
+        char const *a = nullptr;
+        if (use_fma) {
+            a = j ? "u = fma(u,x," : "return fma(u,x,";
+        } 
+        else {
+            a = j ? "u = u * x +" : "return u * x +";
+        }
+        if (j == p.degree()) {
             std::cout << "    " << type << " u = ";
-        else
+        } 
+        else {
             std::cout << "    " << a << " ";
+        }
         std::cout << p[j];
-        switch (mode)
-        {
-            case mode_float: std::cout << "f;\n"; break;
-            case mode_double: std::cout << ";\n"; break;
-            case mode_long_double: std::cout << "l;\n"; break;
+
+		switch (mode) {
+		case mode_float: std::cout << "f"; break;
+		//case mode_double: std::cout << ""; break;
+		case mode_long_double: std::cout << ""; break;
+		}
+
+        if (use_fma && j != p.degree()) {
+            std::cout << ");\n";
+        } else {
+            std::cout << ";\n";
         }
     }
     std::cout << "}\n";
