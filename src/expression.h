@@ -23,6 +23,7 @@
 
 #include <lol/pegtl>
 #include <vector>
+#include <map>
 #include <tuple>
 #include <cassert>
 
@@ -162,6 +163,7 @@ struct expression
     }
 
 private:
+    std::vector<id> m_temp_op;
     std::vector<std::tuple<id, int>> m_ops;
     std::vector<lol::real> m_constants;
 
@@ -230,27 +232,28 @@ private:
                                _, one<')'>> {};
 
     // r_unary_call <- <r_unary_fun> "(" r_expr ")"
-    struct r_unary_fun : sor<TAO_PEGTL_STRING("abs"),
+    // XXX: “log2” must come before “log” etc. because the parser is greedy.
+    struct r_unary_fun : sor<TAO_PEGTL_STRING("tanh"),
+                             TAO_PEGTL_STRING("tan"),
                              TAO_PEGTL_STRING("sqrt"),
-                             TAO_PEGTL_STRING("cbrt"),
-                             TAO_PEGTL_STRING("exp"),
-                             TAO_PEGTL_STRING("exp2"),
-                             TAO_PEGTL_STRING("erf"),
-                             TAO_PEGTL_STRING("log"),
+                             TAO_PEGTL_STRING("sinh"),
+                             TAO_PEGTL_STRING("sin"),
                              TAO_PEGTL_STRING("log2"),
                              TAO_PEGTL_STRING("log10"),
-                             TAO_PEGTL_STRING("sin"),
-                             TAO_PEGTL_STRING("cos"),
-                             TAO_PEGTL_STRING("tan"),
-                             TAO_PEGTL_STRING("asin"),
-                             TAO_PEGTL_STRING("acos"),
-                             TAO_PEGTL_STRING("atan"),
-                             TAO_PEGTL_STRING("sinh"),
-                             TAO_PEGTL_STRING("cosh"),
-                             TAO_PEGTL_STRING("tanh"),
+                             TAO_PEGTL_STRING("log"),
+                             TAO_PEGTL_STRING("ldouble"),
                              TAO_PEGTL_STRING("float"),
+                             TAO_PEGTL_STRING("exp2"),
+                             TAO_PEGTL_STRING("exp"),
+                             TAO_PEGTL_STRING("erf"),
                              TAO_PEGTL_STRING("double"),
-                             TAO_PEGTL_STRING("ldouble")> {};
+                             TAO_PEGTL_STRING("cbrt"),
+                             TAO_PEGTL_STRING("cosh"),
+                             TAO_PEGTL_STRING("cos"),
+                             TAO_PEGTL_STRING("asin"),
+                             TAO_PEGTL_STRING("atan"),
+                             TAO_PEGTL_STRING("acos"),
+                             TAO_PEGTL_STRING("abs")> {};
 
     struct r_unary_call : seq<r_unary_fun,
                               _, one<'('>,
@@ -399,44 +402,48 @@ struct expression::action<expression::r_binary_call>
 };
 
 template<>
+struct expression::action<expression::r_unary_fun>
+{
+    template<typename INPUT>
+    static void apply(INPUT const &in, expression *that)
+    {
+        static std::map<std::string, id> lut =
+        {
+            { "abs",   id::abs },
+            { "sqrt",  id::sqrt },
+            { "cbrt",  id::cbrt },
+            { "exp",   id::exp },
+            { "exp2",  id::exp2 },
+            { "erf",   id::erf },
+            { "log10", id::log10 },
+            { "log2",  id::log2 },
+            { "log",   id::log },
+            { "sinh",  id::sinh },
+            { "cosh",  id::cosh },
+            { "tanh",  id::tanh },
+            { "sin",   id::sin },
+            { "cos",   id::cos },
+            { "tan",   id::tan },
+            { "asin",  id::asin },
+            { "acos",  id::acos },
+            { "atan",  id::atan },
+            { "float",   id::tofloat },
+            { "double",  id::todouble },
+            { "ldouble", id::toldouble },
+        };
+
+        that->m_temp_op.push_back(lut[in.string()]);
+    }
+};
+
+template<>
 struct expression::action<expression::r_unary_call>
 {
     template<typename INPUT>
     static void apply(INPUT const &in, expression *that)
     {
-        struct { id ret; char const *name; } lut[] =
-        {
-            { id::abs,   "abs" },
-            { id::sqrt,  "sqrt" },
-            { id::cbrt,  "cbrt" },
-            { id::exp,   "exp" },
-            { id::exp2,  "exp2" },
-            { id::erf,   "erf" },
-            { id::log10, "log10" },
-            { id::log2,  "log2" },
-            { id::log,   "log" },
-            { id::sinh,  "sinh" },
-            { id::cosh,  "cosh" },
-            { id::tanh,  "tanh" },
-            { id::sin,   "sin" },
-            { id::cos,   "cos" },
-            { id::tan,   "tan" },
-            { id::asin,  "asin" },
-            { id::acos,  "acos" },
-            { id::atan,  "atan" },
-            { id::tofloat,   "float" },
-            { id::todouble,  "double" },
-            { id::toldouble, "ldouble" },
-        };
-
-        for (auto pair : lut)
-        {
-            if (strncmp(in.string().c_str(), pair.name, strlen(pair.name)) != 0)
-                continue;
-
-            that->m_ops.push_back(std::make_tuple(pair.ret, -1));
-            return;
-        }
+        that->m_ops.push_back(std::make_tuple(that->m_temp_op.back(), -1));
+        that->m_temp_op.pop_back();
     }
 };
 

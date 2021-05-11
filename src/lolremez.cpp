@@ -17,9 +17,10 @@
 #include <float.h>
 #include <iostream>
 #include <iomanip>
+#include <optional> // std::optional
 
 #include <lol/utils>
-#include <lol/getopt>
+#include <lol/cli>
 #include <lol/real>
 
 #include "solver.h"
@@ -27,7 +28,28 @@
 
 using lol::real;
 
-static void version(void)
+static std::string copyright =
+    "Copyright © 2005—2020 Sam Hocevar <sam@hocevar.net>\n"
+    "This program is free software. It comes without any warranty, to the extent\n"
+    "permitted by applicable law. You can redistribute it and/or modify it under\n"
+    "the terms of the Do What the Fuck You Want to Public License, Version 2, as\n"
+    "published by the WTFPL Task Force. See http://www.wtfpl.net/ for more details.\n";
+
+static std::string footer =
+    "\n"
+    "Examples:\n"
+    "  lolremez -d 4 -r -1:1 \"atan(exp(1+x))\"\n"
+    "  lolremez -d 4 -r -1:1 \"atan(exp(1+x))\" \"exp(1+x)\"\n"
+    "\n"
+    "Tutorial available on https://github.com/samhocevar/lolremez/wiki\n";
+
+static std::string bugs =
+    "\n"
+    "Written by Sam Hocevar. Report bugs to <sam@hocevar.net> or to the\n"
+    "issue page: https://github.com/samhocevar/lolremez/issues\n";
+
+// FIXME: improve --version output by maybe reusing this function
+static void version()
 {
     std::cout
         << "lolremez " << PACKAGE_VERSION << "\n"
@@ -37,9 +59,11 @@ static void version(void)
         << "the terms of the Do What the Fuck You Want to Public License, Version 2, as\n"
         << "published by the WTFPL Task Force. See http://www.wtfpl.net/ for more details.\n"
         << "\n"
-        << "Written by Sam Hocevar. Report bugs to <sam@hocevar.net>.\n";
+        << copyright
+        << bugs;
 }
 
+// FIXME: improve --help output by mayne adding some messages
 static void usage()
 {
     std::cout
@@ -60,13 +84,8 @@ static void usage()
         << "      --fma                  using fused multiply-add\n"
         << "  -h, --help                 display this help and exit\n"
         << "  -V, --version              output version information and exit\n"
-        << "\n"
-        << "Examples:\n"
-        << "  lolremez -d 4 -r -1:1 \"atan(exp(1+x))\"\n"
-        << "  lolremez -d 4 -r -1:1 \"atan(exp(1+x))\" \"exp(1+x)\"\n"
-        << "\n"
-        << "Tutorial available on https://github.com/samhocevar/lolremez/wiki\n"
-        << "Written by Sam Hocevar. Report bugs to <sam@hocevar.net>.\n";
+        << footer
+        << bugs;
 }
 
 static void FAIL(char const *message = nullptr, ...)
@@ -84,7 +103,7 @@ static void FAIL(char const *message = nullptr, ...)
     exit(EXIT_FAILURE);
 }
 
-/* See the tutorial at http://lolengine.net/wiki/doc/maths/remez */
+// See the tutorial at http://lolengine.net/wiki/doc/maths/remez
 int main(int argc, char **argv)
 {
     std::string str_xmin("-1"), str_xmax("1");
@@ -97,34 +116,54 @@ int main(int argc, char **argv)
         mode_default = mode_double,
     }
     mode = mode_default;
+    root_finder rf = root_finder::pegasus;
 
-    bool has_weight = false;
     bool show_stats = false;
     bool show_progress = false;
     bool show_debug = false;
     bool use_fma = false;
 
+    std::string expr;
+    std::optional<std::string> error, range;
+    std::optional<int> degree;
+    std::optional<int> bits;
+
     remez_solver solver;
 
-    lol::getopt opt(argc, argv);
-    opt.add_opt('h', "help",      false);
-    opt.add_opt('V', "version",   false);
-    opt.add_opt('d', "degree",    true);
-    opt.add_opt('r', "range",     true);
-    opt.add_opt('p', "precision", true);
-    opt.add_opt(200, "float",     false);
-    opt.add_opt(201, "double",    false);
-    opt.add_opt(202, "long-double", false);
-    opt.add_opt(203, "stats",     false);
-    opt.add_opt(204, "progress",  false);
-    opt.add_opt(205, "debug",     false);
+    lol::cli::app opts("lolremez");
+    opts.set_version_flag("-V,--version", PACKAGE_VERSION);
+    opts.footer(footer + bugs);
     opt.add_opt(206, "fma",       false);
 
-    for (;;)
+    // Approximation parameters
+    opts.add_option("-d,--degree", degree, "degree of final polynomial")->type_name("<int>");
+    opts.add_option("-r,--range", range, "range over which to approximate")->type_name("<xmin>:<xmax>");
+    // Precision parameters
+    opts.add_option("-p,--precision", bits, "floating-point precision (default 512)")->type_name("<int>");
+    opts.add_flag("--float", [&](int64_t) { mode = mode_float; }, "use float type");
+    opts.add_flag("--double", [&](int64_t) { mode = mode_double; }, "use double type");
+    opts.add_flag("--long-double", [&](int64_t) { mode = mode_long_double; }, "use long double type");
+    opts.add_flag("--bisect", [&](int64_t) { rf = root_finder::bisect; }, "use bisection for root finding");
+    opts.add_flag("--regula-falsi", [&](int64_t) { rf = root_finder::regula_falsi; }, "use regula falsi for root finding");
+    opts.add_flag("--illinois", [&](int64_t) { rf = root_finder::illinois; }, "use Illinois algorithm for root finding");
+    opts.add_flag("--pegasus", [&](int64_t) { rf = root_finder::pegasus; }, "use Pegasus algorithm for root finding (default)");
+    opts.add_flag("--ford", [&](int64_t) { rf = root_finder::ford; }, "use Ford algorithm for root finding");
+    // Runtime flags
+    opts.add_flag("--progress", show_progress, "print progress");
+    opts.add_flag("--stats", show_stats, "print timing statistics");
+    opts.add_flag("--debug", show_debug, "print debug messages");
+    // Expression to evaluate and optional error expression
+    opts.add_option("expression", expr)->type_name("<x-expression>")->required();
+    opts.add_option("error", error)->type_name("<x-expression>");
+
+    CLI11_PARSE(opts, argc, argv);
+
+    if (degree)
     {
-        int c = opt.parse();
-        if (c == -1)
-            break;
+        if (*degree < 1)
+            FAIL("invalid degree: must be at least 1");
+        solver.set_order(*degree);
+    }
 
         switch (c)
         {
@@ -179,7 +218,14 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Initialise solver: ranges */
+    if (bits)
+    {
+        if (*bits < 32 || *bits > 65535)
+            FAIL("invalid precision %d", *bits);
+        real::global_bigit_count((*bits + 31) / 32);
+    }
+
+    // Initialise solver: ranges
     lol::real xmin, xmax;
     expression ex;
 
@@ -199,19 +245,10 @@ int main(int argc, char **argv)
         FAIL("invalid range: xmin >= xmax");
     solver.set_range(xmin, xmax);
 
-    /* Initialise solver: functions */
-    if (opt.index >= argc)
-        FAIL("too few arguments: no function specified");
+    if (!ex.parse(expr))
+        FAIL("invalid function: %s", expr.c_str());
 
-    if (opt.index + 2 < argc)
-        FAIL("too many arguments");
-
-    has_weight = (opt.index + 1 < argc);
-
-    if (!ex.parse(argv[opt.index]))
-        FAIL("invalid function: %s", argv[opt.index]);
-
-    /* Special case: if the function is constant, evaluate it immediately */
+    // Special case: if the function is constant, evaluate it immediately
     if (ex.is_constant())
     {
         std::cout << std::setprecision(int(real::DEFAULT_BIGIT_COUNT * 16 / 3.321928094) + 2);
@@ -221,28 +258,29 @@ int main(int argc, char **argv)
 
     solver.set_func(ex);
 
-    if (has_weight)
+    if (error)
     {
-        if (!ex.parse(argv[opt.index + 1]))
-            FAIL("invalid weight function: %s", argv[opt.index + 1]);
+        if (!ex.parse(*error))
+            FAIL("invalid weight function: %s", error->c_str());
 
         solver.set_weight(ex);
     }
 
-    /* https://en.wikipedia.org/wiki/Floating-point_arithmetic#Internal_representation */
+    // https://en.wikipedia.org/wiki/Floating-point_arithmetic#Internal_representation
     int digits = mode == mode_float ? FLT_DIG + 2 :
                  mode == mode_double ? DBL_DIG + 2 : LDBL_DIG + 2;
     solver.set_digits(digits);
+    solver.set_root_finder(rf);
 
     solver.show_stats = show_stats;
     solver.show_debug = show_debug;
 
-    /* Solve polynomial */
+    // Solve polynomial
     solver.do_init();
     for (int iteration = 0; ; ++iteration)
     {
         fprintf(stderr, "Iteration: %d\r", iteration);
-        fflush(stderr); /* Required on Windows because stderr is buffered. */
+        fflush(stderr); // Required on Windows because stderr is buffered.
         if (!solver.do_step())
             break;
 
@@ -268,9 +306,9 @@ int main(int argc, char **argv)
     auto p = solver.get_estimate();
     char const *type = mode == mode_float ? "float" :
                        mode == mode_double ? "double" : "long double";
-    std::cout << "// Approximation of f(x) = " << argv[opt.index] << '\n';
-    if (has_weight)
-        std::cout << "// with weight function g(x) = " << argv[opt.index + 1] << '\n';
+    std::cout << "// Approximation of f(x) = " << expr << '\n';
+    if (error)
+        std::cout << "// with weight function g(x) = " << *error << '\n';
     std::cout << "// on interval [ " << str_xmin << ", " << str_xmax << " ]\n";
     std::cout << "// with a polynomial of degree " << p.degree() << ".\n";
 

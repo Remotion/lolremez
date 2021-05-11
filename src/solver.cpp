@@ -78,6 +78,11 @@ void remez_solver::set_weight(expression const &expr)
     m_weight = expr;
 }
 
+void remez_solver::set_root_finder(root_finder rf)
+{
+    m_rf = rf;
+}
+
 void remez_solver::do_init()
 {
     m_k1 = (m_xmax + m_xmin) / 2;
@@ -232,18 +237,18 @@ void remez_solver::find_zeros()
 {
     timer t;
 
-    static real const zero = real("0");
-
     /* Initialise an [a,b] bracket for each zero we try to find */
     for (int i = 0; i < m_order + 1; i++)
     {
         point &a = m_zeros_state[i][0];
         point &b = m_zeros_state[i][1];
+        point &c = m_zeros_state[i][1];
 
         a.x = m_control[i];
         a.err = eval_estimate(a.x) - eval_func(a.x);
         b.x = m_control[i + 1];
         b.err = eval_estimate(b.x) - eval_func(b.x);
+        c.err = 0;
 
         m_questions.push(i);
     }
@@ -257,7 +262,7 @@ void remez_solver::find_zeros()
         point const &b = m_zeros_state[i][1];
         point const &c = m_zeros_state[i][2];
 
-        if (c.err == zero || fabs(a.x - b.x) <= m_epsilon)
+        if (c.err.is_zero() || fabs(a.x - b.x) <= m_epsilon)
         {
             m_zeros[i] = c.x;
             ++finished;
@@ -278,12 +283,11 @@ void remez_solver::find_zeros()
 //
 // If the weight function is 1, we would only need to compute m_order extrema
 // because we already know that -1 and +1 are extrema. However when weighing
-// the error the extrema get slightly moved around.
+// the error the exact extrema locations get slightly moved around.
 //
 // The algorithm used here is successive parabolic interpolation. FIXME: we
 // could use Brent’s method instead, which combines parabolic interpolation
-// and golden ratio search and has superlinear convergence. However, the
-// real bottleneck for now is the root finding, so this has low priority.
+// and golden ratio search and has superlinear convergence.
 void remez_solver::find_extrema()
 {
     timer t;
@@ -358,10 +362,10 @@ real remez_solver::eval_error(real const &x)
     return fabs((eval_estimate(x) - eval_func(x)) / eval_weight(x));
 }
 
+// Worker threads handle jobs from the main thread, computing either a root finding step
+// or an extrema finding iteration step.
 void remez_solver::worker_thread()
 {
-    static real const zero = (real)0;
-
     for (;;)
     {
         int i = m_questions.pop();
@@ -373,34 +377,58 @@ void remez_solver::worker_thread()
         }
         else if (i < 1000)
         {
+            // Root finding step
             point &a = m_zeros_state[i][0];
             point &b = m_zeros_state[i][1];
             point &c = m_zeros_state[i][2];
 
-#if 0
-            /* This (regula falsi) is actually really slow */
-            real s = fabs(b.err) / (fabs(a.err) + fabs(b.err));
-            real newc = b.x + s * (a.x - b.x);
+            auto old_c_err = c.err;
 
-            /* If the third point didn't change since last iteration,
-             * we may be at an inflection point. Use the midpoint to get
-             * out of this situation. */
-            c.x = newc != c.x ? newc : (a.x + b.x) / 2;
-#else
-            c.x = (a.x + b.x) / 2;
-#endif
+            // Bisect method uses the midpoint. Other methods such as regula falsi (slow) and
+            // some improved versions use the “false position”.
+            if (m_rf == root_finder::bisect)
+                c.x = (a.x + b.x) / 2;
+            else
+                c.x = a.x - a.err * (b.x - a.x) / (b.err - a.err);
             c.err = eval_estimate(c.x) - eval_func(c.x);
 
-            if ((a.err < zero && c.err < zero)
-                 || (a.err > zero && c.err > zero))
-                a = c;
-            else
-                b = c;
+            // pd is the point with a different error sign from c, ps has same sign
+            point *pd = &a, *ps = &b;
+            if (sign(a.err) * sign(c.err) > 0)
+                std::swap(pd, ps);
+
+            // Regula falsi variations tweak a.err or b.err for the next iteration
+            // when the computed error has the same sign as the last time.
+            if (sign(c.err) * sign(old_c_err) > 0)
+            {
+                switch (m_rf)
+                {
+                case root_finder::illinois:
+                    // Illinois algorithm
+                    pd->err /= 2;
+                    break;
+                case root_finder::pegasus:
+                    // Pegasus algorithm from doi:10.1007/BF01932959 by M. Dowell and P. Jarratt.
+                    // “The philosophy of the method is to scale down the value fi-1 by the factor
+                    // fi/(fi+fi+1) […]”.
+                    pd->err *= old_c_err / (old_c_err + c.err);
+                    break;
+                case root_finder::ford:
+                    // Method 4 of https://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.53.8676
+                    // by J. A. Ford
+                    pd->err *= real::R_1() - c.err / ps->err - c.err / pd->err;
+                    break;
+                }
+            }
+
+            // Either a or b becomes c
+            *ps = c;
 
             m_answers.push(i);
         }
         else if (i < 2000)
         {
+            // Extrema finding step
             i -= 1000;
 
             point &a = m_extrema_state[i][0];
