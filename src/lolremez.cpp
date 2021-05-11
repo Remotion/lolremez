@@ -53,11 +53,6 @@ static void version()
 {
     std::cout
         << "lolremez " << PACKAGE_VERSION << "\n"
-        << "Copyright © 2005—2020 Sam Hocevar <sam@hocevar.net>\n"
-        << "This program is free software. It comes without any warranty, to the extent\n"
-        << "permitted by applicable law. You can redistribute it and/or modify it under\n"
-        << "the terms of the Do What the Fuck You Want to Public License, Version 2, as\n"
-        << "published by the WTFPL Task Force. See http://www.wtfpl.net/ for more details.\n"
         << "\n"
         << copyright
         << bugs;
@@ -133,7 +128,7 @@ int main(int argc, char **argv)
     lol::cli::app opts("lolremez");
     opts.set_version_flag("-V,--version", PACKAGE_VERSION);
     opts.footer(footer + bugs);
-    opt.add_opt(206, "fma",       false);
+
 
     // Approximation parameters
     opts.add_option("-d,--degree", degree, "degree of final polynomial")->type_name("<int>");
@@ -148,10 +143,12 @@ int main(int argc, char **argv)
     opts.add_flag("--illinois", [&](int64_t) { rf = root_finder::illinois; }, "use Illinois algorithm for root finding");
     opts.add_flag("--pegasus", [&](int64_t) { rf = root_finder::pegasus; }, "use Pegasus algorithm for root finding (default)");
     opts.add_flag("--ford", [&](int64_t) { rf = root_finder::ford; }, "use Ford algorithm for root finding");
+    
     // Runtime flags
     opts.add_flag("--progress", show_progress, "print progress");
     opts.add_flag("--stats", show_stats, "print timing statistics");
     opts.add_flag("--debug", show_debug, "print debug messages");
+    opts.add_flag("--fma", use_fma, "use fma");
     // Expression to evaluate and optional error expression
     opts.add_option("expression", expr)->type_name("<x-expression>")->required();
     opts.add_option("error", error)->type_name("<x-expression>");
@@ -165,57 +162,13 @@ int main(int argc, char **argv)
         solver.set_order(*degree);
     }
 
-        switch (c)
-        {
-        case 'd': { /* --degree */
-            int degree = atoi(opt.arg);
-            if (degree < 1)
-                FAIL("invalid degree: must be at least 1");
-            solver.set_order(degree);
-          } break;
-        case 'r': { /* --range */
-            auto arg = lol::split(std::string(opt.arg), ':');
-            if (arg.size() != 2)
-                FAIL("invalid range");
-            str_xmin = arg[0];
-            str_xmax = arg[1];
-          } break;
-        case 'p': { /* --precision */
-            int bits = atoi(opt.arg);
-            if (bits < 32 || bits > 65535)
-                FAIL("invalid precision %s", opt.arg);
-            real::global_bigit_count((bits + 31) / 32);
-          } break;
-        case 200: /* --float */
-            mode = mode_float;
-            break;
-        case 201: /* --double */
-            mode = mode_double;
-            break;
-        case 202: /* --long-double */
-            mode = mode_long_double;
-            break;
-        case 203: /* --stats */
-            show_stats = true;
-            break;
-        case 204: /* --progress */
-            show_progress = true;
-            break;
-        case 205: /* --debug */
-            show_debug = true;
-            break;
-        case 206: /* --fma */
-            use_fma = true;
-            break;
-        case 'h': /* --help */
-            usage();
-            return EXIT_SUCCESS;
-        case 'V': /* --version */
-            version();
-            return EXIT_SUCCESS;
-        default:
-            FAIL();
-        }
+	if (range)
+	{
+		auto arg = lol::split(*range, ':');
+		if (arg.size() != 2)
+			FAIL("invalid range");
+		str_xmin = arg[0];
+		str_xmax = arg[1];
     }
 
     if (bits)
@@ -345,8 +298,8 @@ int main(int argc, char **argv)
 
 		switch (mode) {
 		case mode_float: std::cout << "f"; break;
-		//case mode_double: std::cout << ""; break;
-		case mode_long_double: std::cout << ""; break;
+		//case mode_double: std::cout << ";\n"; break;
+		case mode_long_double: std::cout << "l"; break;
 		}
 
         if (use_fma && j != p.degree()) {
