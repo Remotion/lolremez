@@ -77,6 +77,8 @@ static void usage()
 		<< "      --float                using float precision\n"
 		<< "      --double               using double precision\n"
         << "      --fma                  using fused multiply-add\n"
+        << "      --hex                  display hexadecimal constants\n"
+        //<< "      --estrin               use estrin's scheme\n"
         << "  -h, --help                 display this help and exit\n"
         << "  -V, --version              output version information and exit\n"
         << footer
@@ -117,6 +119,8 @@ int main(int argc, char **argv)
     bool show_progress = false;
     bool show_debug = false;
     bool use_fma = false;
+    bool use_estrin = false; // do not work
+    bool use_hex = false;
 
     std::string expr;
     std::optional<std::string> error, range;
@@ -148,7 +152,9 @@ int main(int argc, char **argv)
     opts.add_flag("--progress", show_progress, "print progress");
     opts.add_flag("--stats", show_stats, "print timing statistics");
     opts.add_flag("--debug", show_debug, "print debug messages");
-    opts.add_flag("--fma", use_fma, "use fma");
+    opts.add_flag("--fma", use_fma, "using fused multiply-add (fma)");
+    opts.add_flag("--estrin", use_estrin, "use estrin's scheme");
+    opts.add_flag("--hex", use_hex, "display hexadecimal constants");
     // Expression to evaluate and optional error expression
     opts.add_option("expression", expr)->type_name("<x-expression>")->required();
     opts.add_option("error", error)->type_name("<x-expression>");
@@ -279,35 +285,74 @@ int main(int argc, char **argv)
     // Print C/C++ function
     std::cout << std::setprecision(digits);
     std::cout << type << " f(" << type << " x)\n{\n";
-    for (int j = p.degree(); j >= 0; --j)
-    {
-        char const *a = nullptr;
-        if (use_fma) {
-            a = j ? "u = fma(u,x," : "return fma(u,x,";
-        } 
-        else {
-            a = j ? "u = u * x +" : "return u * x +";
-        }
-        if (j == p.degree()) {
-            std::cout << "    " << type << " u = ";
-        } 
-        else {
-            std::cout << "    " << a << " ";
-        }
-        std::cout << p[j];
 
+    if (use_estrin) { //! do not work >>>
+        std::cout << "    " << "auto u = Estrin(x,\n";
+        for (int j = 0; j < p.degree()-1; ++j)
+        //for (int j = p.degree(); j > 0; --j)
+        {
+            std::cout << "        " << p[j];
+			switch (mode) {
+			case mode_float: std::cout << "f,\n"; break;
+			case mode_double: std::cout << ",\n"; break;
+			case mode_long_double: std::cout << "l,\n"; break;
+			}
+        }
+        std::cout << "        " <<  p[p.degree()-1];
+        //std::cout << "        " <<  p[0];
 		switch (mode) {
-		case mode_float: std::cout << "f"; break;
-		//case mode_double: std::cout << ";\n"; break;
-		case mode_long_double: std::cout << "l"; break;
+		case mode_float: std::cout << "f);\n"; break;
+		case mode_double: std::cout << ");\n"; break;
+		case mode_long_double: std::cout << "l);\n"; break;
 		}
 
-        if (use_fma && j != p.degree()) {
-            std::cout << ");\n";
-        } else {
-            std::cout << ";\n";
+        std::cout << "    " <<  "return u;\n";
+    } 
+    else {
+        for (int j = p.degree(); j >= 0; --j)
+        {
+            char const *a = nullptr;
+            if (use_fma) {
+                a = j ? "u = fma(u,x," : "return fma(u,x,";
+            } 
+            else {
+                a = j ? "u = u * x +" : "return u * x +";
+            }
+            if (j == p.degree()) {
+                std::cout << "    " << type << " u = ";
+            } 
+            else {
+                std::cout << "    " << a << " ";
+            }
+            if (use_hex) {
+                if (mode == mode_float) { 
+                    std::cout << std::hexfloat << float(p[j]);
+                    //printf("%a",float(p[j]));
+                }
+                else if (mode == mode_double) { 
+                    std::cout << std::hexfloat << double(p[j]);
+                    //printf("%a",double(p[j]));
+                }
+                else  { std::cout << std::hex << p[j]; }
+            }
+            else {
+                std::cout << p[j];
+            }
+
+		    switch (mode) {
+		    case mode_float: std::cout << "f"; break;
+		    //case mode_double: std::cout << ";\n"; break;
+		    case mode_long_double: std::cout << "l"; break;
+		    }
+
+            if (use_fma && j != p.degree()) {
+                std::cout << ");\n";
+            } else {
+                std::cout << ";\n";
+            }
         }
     }
+
     std::cout << "}\n";
 
     return 0;
