@@ -77,6 +77,7 @@ static void usage()
 		<< "      --float                using float precision\n"
 		<< "      --double               using double precision\n"
         << "      --fma                  using fused multiply-add\n"
+        << "      --hex                  display hexadecimal constants\n"
         << "      --estrin               use estrin's scheme\n"
         << "  -h, --help                 display this help and exit\n"
         << "  -V, --version              output version information and exit\n"
@@ -99,6 +100,7 @@ static void FAIL(char const *message = nullptr, ...)
     exit(EXIT_FAILURE);
 }
 
+
 // See the tutorial at http://lolengine.net/wiki/doc/maths/remez
 int main(int argc, char **argv)
 {
@@ -118,7 +120,19 @@ int main(int argc, char **argv)
     bool show_progress = false;
     bool show_debug = false;
     bool use_fma = false;
-    bool use_estrin = false;
+    bool use_estrin = false; // Estrin's scheme
+    bool use_hex = false; // print out constants in hex mode
+
+    // used to print out constants in hex mode
+    const auto cout_hex_float = [=](const real& r) {
+		if (mode == mode_float) {
+			std::cout << std::hexfloat << float(r);
+		}
+		else if (mode == mode_double) {
+			std::cout << std::hexfloat << double(r);
+		}
+		else { std::cout << std::hex << r; }
+    };
 
     std::string expr;
     std::optional<std::string> error, range;
@@ -152,6 +166,7 @@ int main(int argc, char **argv)
     opts.add_flag("--debug", show_debug, "print debug messages");
     opts.add_flag("--fma", use_fma, "using fused multiply-add (fma)");
     opts.add_flag("--estrin", use_estrin, "use estrin's scheme");
+    opts.add_flag("--hex", use_hex, "display hexadecimal constants");
     // Expression to evaluate and optional error expression
     opts.add_option("expression", expr)->type_name("<x-expression>")->required();
     opts.add_option("error", error)->type_name("<x-expression>");
@@ -278,25 +293,39 @@ int main(int argc, char **argv)
         std::cout << (j < p.degree() - 1 ? ")" : "") << "*x"
                   << (p[j] > real::R_0() ? "+" : "") << p[j];
     std::cout << '\n';
+     
+    std::cout << "// P(" << xmin << ") = " << p.eval(xmin) << "\n";
+    std::cout << "// P(" << xmax << ") = " << p.eval(xmax) << "\n";
+
 
     // Print C/C++ function
     std::cout << std::setprecision(digits);
     std::cout << type << " f(" << type << " x)\n{\n";
 
-    if (use_estrin) { // do not work >>>
+    // Estrin's scheme
+    if (use_estrin) { 
         std::cout << "    " << "auto u = Estrin(x,\n";
-        for (int j = 0; j < p.degree()-1; ++j)
-        //for (int j = p.degree(); j > 0; --j)
+        for (int j = 0; j < p.degree(); ++j)
         {
-            std::cout << "        " << p[j];
+            if (use_hex) {
+                std::cout << "        ";
+            	cout_hex_float(p[j]);
+            } else {
+				std::cout << "        " << p[j];
+            }
 			switch (mode) {
 			case mode_float: std::cout << "f,\n"; break;
 			case mode_double: std::cout << ",\n"; break;
 			case mode_long_double: std::cout << "l,\n"; break;
 			}
         }
-        std::cout << "        " <<  p[p.degree()-1];
-        //std::cout << "        " <<  p[0];
+		if (use_hex) {
+            std::cout << "        ";
+			cout_hex_float(p[p.degree()]);
+		}
+		else {
+			std::cout << "        " <<  p[p.degree()];
+        }
 		switch (mode) {
 		case mode_float: std::cout << "f);\n"; break;
 		case mode_double: std::cout << ");\n"; break;
@@ -321,7 +350,12 @@ int main(int argc, char **argv)
             else {
                 std::cout << "    " << a << " ";
             }
-            std::cout << p[j];
+            if (use_hex) {
+                cout_hex_float(p[j]);
+            }
+            else {
+                std::cout << p[j];
+            }
 
 		    switch (mode) {
 		    case mode_float: std::cout << "f"; break;
